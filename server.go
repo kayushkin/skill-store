@@ -132,6 +132,10 @@ func (h *handler) syncSource(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := h.s.Sync(id)
 	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			writeErr(w, 404, "source not found")
+			return
+		}
 		writeErr(w, 500, err.Error())
 		return
 	}

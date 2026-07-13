@@ -1,6 +1,7 @@
 package skillstore
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -93,7 +94,7 @@ func (s *Store) Uninstall(skillID int64) (*Installation, error) {
 	var installedAt int64
 	err := s.db.QueryRow(`SELECT target_path, installed_at FROM installations WHERE skill_id=?`, skillID).Scan(&target, &installedAt)
 	if err != nil {
-		if err.Error() == "sql: no rows in result set" {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err

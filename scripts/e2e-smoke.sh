@@ -24,21 +24,26 @@
 #
 # NO LIVE STATE. The live service uses port 8301, ~/.config/skill-store (data)
 # and ~/.claude/skills (install target). This run uses none of them:
-#   * SKILL_STORE_ADDR      → 127.0.0.1:$E2E_PORT
-#   * SKILL_STORE_DATA_DIR  → $TMP_DIR/data
-#   * HOME                  → $TMP_DIR/home
-# That last one matters. skill-store's install dir is NOT configurable by env —
-# Open() hardcodes DefaultInstallDir(), and cmd/skill-store never calls
-# SetInstallDir() — but DefaultInstallDir() resolves through os.UserHomeDir(),
-# i.e. $HOME. Overriding HOME therefore redirects the install target (and
-# BuildSeedManifest's $HOME-relative rewriting) into the temp dir, which is what
-# makes the install/seed half of this test safe to run at all. If someone adds a
-# SKILL_STORE_INSTALL_DIR env var later, prefer it and drop the HOME override.
+#   * SKILL_STORE_ADDR         → 127.0.0.1:$E2E_PORT
+#   * SKILL_STORE_DATA_DIR     → $TMP_DIR/data
+#   * SKILL_STORE_INSTALL_DIR  → $TMP_DIR/home/custom-skills
+#   * HOME                     → $TMP_DIR/home
+# The install dir is what makes the install/uninstall/seed half of this test
+# safe to run at all: without an override the server copies skills straight into
+# the live ~/.claude/skills. It is deliberately NOT $FAKE_HOME/.claude/skills —
+# pointing it somewhere the default could never produce is what proves the env
+# var is actually honoured rather than coincidentally agreeing with the default,
+# and the run asserts $FAKE_HOME/.claude is never created.
 #
-# No credentials: the server reads exactly two env vars (SKILL_STORE_ADDR,
-# SKILL_STORE_DATA_DIR) and no token — verified in cmd/skill-store/main.go.
-# The only hardcoded github.com URLs in the repo live in cmd/seed/main.go, a
-# separate binary this script never builds or runs.
+# HOME is still redirected, for two reasons: BuildSeedManifest rewrites
+# install_path relative to $HOME (so the install dir must stay *under* it, which
+# is why the custom dir lives inside $FAKE_HOME), and it is belt-and-braces
+# against any future $HOME-relative default.
+#
+# No credentials: the server reads exactly three env vars (SKILL_STORE_ADDR,
+# SKILL_STORE_DATA_DIR, SKILL_STORE_INSTALL_DIR) and no token — verified in
+# cmd/skill-store/main.go. The only hardcoded github.com URLs in the repo live
+# in cmd/seed/main.go, a separate binary this script never builds or runs.
 #
 # Exits 0 on success, non-zero on the FIRST failing assertion, dumping the
 # server log to stderr.
@@ -64,6 +69,10 @@ TMP_DIR="$(mktemp -d -t skill-store-e2e.XXXXXX)"
 BIN_DIR="$TMP_DIR/bin"
 DATA_DIR="$TMP_DIR/data"
 FAKE_HOME="$TMP_DIR/home"
+# Under $FAKE_HOME (BuildSeedManifest skips installs outside $HOME) but NOT at
+# the default .claude/skills — so the install assertions below can only pass if
+# SKILL_STORE_INSTALL_DIR is honoured.
+INSTALL_DIR="$FAKE_HOME/custom-skills"
 FIXTURE_REPO="$TMP_DIR/fixture-repo"
 SERVER_LOG="$TMP_DIR/server.log"
 mkdir -p "$BIN_DIR" "$DATA_DIR" "$FAKE_HOME"
@@ -131,6 +140,10 @@ tags: [e2e]
 
 # E2E Widget
 SKILLMD
+# A sibling payload file, so e2e-widget gets a dir under $DATA_DIR/skills. That
+# dir is what pruneOrphanSkillDirs must reap when the skill disappears upstream;
+# without a payload file the prune step has nothing to reap and never runs.
+printf '# widget notes\nE2E_WIDGET_MARKER\n' >"$FIXTURE_REPO/skills/e2e-widget/notes.md"
 # A file outside the subpath — sync must ignore it (subpath scoping).
 printf 'not a skill\n' >"$FIXTURE_REPO/README.md"
 
@@ -143,9 +156,11 @@ echo "    fixture repo: $FIXTURE_REPO @ ${FIXTURE_COMMIT:0:12}"
 
 step "launch skill-store on 127.0.0.1:$PORT"
 echo "    SKILL_STORE_DATA_DIR=$DATA_DIR"
-echo "    HOME=$FAKE_HOME  (redirects install dir away from ~/.claude/skills)"
+echo "    SKILL_STORE_INSTALL_DIR=$INSTALL_DIR  (keeps installs out of ~/.claude/skills)"
+echo "    HOME=$FAKE_HOME"
 SKILL_STORE_ADDR="127.0.0.1:$PORT" \
 SKILL_STORE_DATA_DIR="$DATA_DIR" \
+SKILL_STORE_INSTALL_DIR="$INSTALL_DIR" \
 HOME="$FAKE_HOME" \
   "$BIN_DIR/skill-store" >"$SERVER_LOG" 2>&1 &
 SERVER_PID=$!
@@ -190,6 +205,8 @@ echo "    source id: $SRC_ID"
 
 eq "$(code_of POST /sources -H 'Content-Type: application/json' -d '{"name":"no-url"}')" \
    "400" "POST /sources without repo_url"
+eq "$(code_of POST /sources/99999999/sync)" "404" "POST /sources/<missing>/sync"
+eq "$(code_of POST /sources/not-a-number/sync)" "400" "POST /sources/<non-numeric>/sync"
 
 step "POST /sources/$SRC_ID/sync — ingest from the local git repo"
 SYNC="$(curl -fsS --max-time 60 -X POST "$BASE/sources/$SRC_ID/sync")"
@@ -267,10 +284,14 @@ TCODE="$(curl -s --path-as-is -o "$TRAV" -w '%{http_code}' --max-time 10 \
 grep -q 'root:' "$TRAV" && fail "path traversal leaked /etc/passwd" || true
 echo "    traversal blocked (HTTP $TCODE, no leak)"
 
-step "POST /skills/$HELLO_ID/install — into \$HOME=$FAKE_HOME"
+step "POST /skills/$HELLO_ID/install — into SKILL_STORE_INSTALL_DIR=$INSTALL_DIR"
 INST="$(curl -fsS --max-time 10 -X POST "$BASE/skills/$HELLO_ID/install")"
 TARGET="$(jq -r '.target_path' <<<"$INST")"
-eq "$TARGET" "$FAKE_HOME/.claude/skills/e2e-hello" "install .target_path (must be under the fake HOME)"
+# The load-bearing assertion of this whole file: the install landed where the
+# env var said, not at DefaultInstallDir(). A build that ignores
+# SKILL_STORE_INSTALL_DIR writes to $FAKE_HOME/.claude/skills and fails here.
+eq "$TARGET" "$INSTALL_DIR/e2e-hello" "install .target_path == SKILL_STORE_INSTALL_DIR/<name>"
+[ ! -e "$FAKE_HOME/.claude" ] || fail "install fell back to the default ~/.claude/skills despite SKILL_STORE_INSTALL_DIR"
 eq "$(jq -r '.skill_name' <<<"$INST")" "e2e-hello" "install .skill_name"
 # Assert on the filesystem, not just the JSON: the payload really landed.
 [ -f "$TARGET/SKILL.md" ] || fail "install did not write $TARGET/SKILL.md"
@@ -301,7 +322,7 @@ eq "$(jq -r '[.entries[].relpath] | sort | join(",")' <<<"$MF")" "SKILL.md,refer
 # install_path is rewritten $HOME-relative — with HOME faked, it must be the
 # fake-home-relative path and must NOT be absolute.
 eq "$(jq -r '.entries[] | select(.relpath=="SKILL.md") | .install_path' <<<"$MF")" \
-   ".claude/skills/e2e-hello/SKILL.md" "manifest .install_path (\$HOME-relative)"
+   "custom-skills/e2e-hello/SKILL.md" "manifest .install_path (\$HOME-relative)"
 VID="$(jq -r '.entries[] | select(.relpath=="SKILL.md") | .version_id' <<<"$MF")"
 [ "$VID" -gt 0 ] 2>/dev/null || fail "manifest .version_id not a positive id: $VID"
 MF_SHA="$(jq -r '.entries[] | select(.relpath=="SKILL.md") | .sha256' <<<"$MF")"
@@ -374,6 +395,11 @@ eq "$(jq -r '.pruned' <<<"$SYNC3")" "1" "prune-sync .pruned"
 eq "$(jq -r '.commit' <<<"$SYNC3")" "$(git -C "$FIXTURE_REPO" rev-parse HEAD)" "prune-sync .commit == new HEAD"
 eq "$(curl -fsS --max-time 10 "$BASE/skills" | jq -r '[.[].name]|join(",")')" "e2e-hello" "e2e-widget is gone"
 eq "$(code_of GET "/skills/$WIDGET_ID")" "404" "pruned skill is 404"
+eq "$(jq -r '.errors // [] | length' <<<"$SYNC3")" "0" "prune-sync reported errors"
+# The pruned skill's payload dir must be reaped too, not just its DB row.
+[ ! -e "$DATA_DIR/skills/$WIDGET_ID" ] || fail "prune left the orphan payload dir $DATA_DIR/skills/$WIDGET_ID"
+[ -e "$DATA_DIR/skills/$HELLO_ID" ] || fail "prune reaped the payload dir of a skill that still exists"
+echo "    orphan payload dir $DATA_DIR/skills/$WIDGET_ID reaped; e2e-hello's kept"
 
 step "DELETE /skills/$HELLO_ID and DELETE /sources/$SRC_ID"
 eq "$(curl -fsS --max-time 10 -X DELETE "$BASE/skills/$HELLO_ID" | jq -r '.status')" "deleted" "DELETE /skills"
@@ -387,8 +413,9 @@ step "the live store was never touched"
 # Belt and braces: nothing this run created may sit outside $TMP_DIR.
 [ -f "$DATA_DIR/skill-store.db" ] || fail "expected a temp DB at $DATA_DIR/skill-store.db"
 [ ! -e "$FAKE_HOME/.config/skill-store" ] || fail "server fell back to \$HOME/.config/skill-store despite SKILL_STORE_DATA_DIR"
+[ ! -e "$FAKE_HOME/.claude" ] || fail "server fell back to \$HOME/.claude/skills despite SKILL_STORE_INSTALL_DIR"
 echo "    temp DB:      $DATA_DIR/skill-store.db"
-echo "    temp install: $FAKE_HOME/.claude/skills (live ~/.claude/skills untouched)"
+echo "    temp install: $INSTALL_DIR (live ~/.claude/skills untouched)"
 
 step "SUCCESS — skill-store boots, opens its DB, registers its routes, and answers"
 echo "    server log: $SERVER_LOG"

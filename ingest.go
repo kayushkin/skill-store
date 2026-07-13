@@ -2,6 +2,8 @@ package skillstore
 
 import (
 	"bytes"
+	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -229,10 +231,13 @@ func (s *Store) pruneOrphanSkillDirs(keepIDs []int64) error {
 		// Is there any row with this id? If not, remove.
 		var exists int
 		err := s.db.QueryRow(`SELECT 1 FROM skills WHERE id=?`, e.Name()).Scan(&exists)
-		if err != nil {
-			if err.Error() == "sql: no rows in result set" {
-				_ = os.RemoveAll(filepath.Join(s.SkillsDir(), e.Name()))
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			if rerr := os.RemoveAll(filepath.Join(s.SkillsDir(), e.Name())); rerr != nil {
+				return fmt.Errorf("remove orphan skill dir %s: %w", e.Name(), rerr)
 			}
+		case err != nil:
+			return fmt.Errorf("look up skill %s: %w", e.Name(), err)
 		}
 	}
 	return nil

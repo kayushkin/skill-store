@@ -26,6 +26,13 @@ func main() {
 	}
 	defer store.Close()
 
+	// Where installed skills are copied. Defaults to ~/.claude/skills; an
+	// override is what lets a test drive the install/uninstall/seed routes
+	// without writing into the live skills directory.
+	if installDir := os.Getenv("SKILL_STORE_INSTALL_DIR"); installDir != "" {
+		store.SetInstallDir(installDir)
+	}
+
 	mux := http.NewServeMux()
 	skillstore.RegisterHandlers(mux, store)
 
@@ -36,7 +43,7 @@ func main() {
 	}
 
 	go func() {
-		log.Printf("skill-store listening on %s (data=%s)", addr, store.DataDir())
+		log.Printf("skill-store listening on %s (data=%s install=%s)", addr, store.DataDir(), store.InstallDir())
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("listen: %v", err)
 		}
