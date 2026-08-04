@@ -3,6 +3,7 @@ package skillstore
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"mime"
 	"net/http"
@@ -81,8 +82,26 @@ func (h *handler) createSource(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "invalid json: "+err.Error())
 		return
 	}
-	if src.Name == "" || src.RepoURL == "" {
-		writeErr(w, 400, "name and repo_url required")
+	if src.Name == "" {
+		writeErr(w, 400, "name required")
+		return
+	}
+	if src.Kind == "" {
+		src.Kind = SourceKindGit
+	}
+	switch src.Kind {
+	case SourceKindGit:
+		if src.RepoURL == "" {
+			writeErr(w, 400, "repo_url required for a git source")
+			return
+		}
+	case SourceKindLocal:
+		if src.LocalPath == "" {
+			writeErr(w, 400, "local_path required for a local source")
+			return
+		}
+	default:
+		writeErr(w, 400, fmt.Sprintf("unknown kind %q (want %q or %q)", src.Kind, SourceKindGit, SourceKindLocal))
 		return
 	}
 	src.Enabled = true

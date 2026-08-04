@@ -68,20 +68,85 @@ func Open(dataDir string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("enable WAL: %w", err)
 	}
-	if _, err := db.Exec(schemaSQL); err != nil {
+	if err := migrate(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
 	return &Store{db: db, dataDir: dataDir, installDir: DefaultInstallDir()}, nil
 }
 
+// columnMigration adds one column to an existing table.
+type columnMigration struct {
+	table      string
+	column     string
+	definition string
+}
+
+// migrate applies the base schema, then every additive column migration.
+//
+// schema.sql carries only CREATE TABLE IF NOT EXISTS, so a column added there
+// alone reaches a fresh database and no other: an existing table is left
+// exactly as it was, silently. Any column added after a database first shipped
+// must therefore appear BOTH in schema.sql (for new installs) and here (for
+// existing ones).
+//
+// Each migration is checked against the live table rather than applied and
+// ignored on error, so a genuine failure still surfaces instead of hiding
+// behind an expected "duplicate column name".
+func migrate(db *sql.DB) error {
+	if _, err := db.Exec(schemaSQL); err != nil {
+		return fmt.Errorf("apply schema: %w", err)
+	}
+	migrations := []columnMigration{
+		{"sources", "kind", "TEXT NOT NULL DEFAULT 'git'"},
+		{"sources", "local_path", "TEXT NOT NULL DEFAULT ''"},
+	}
+	for _, m := range migrations {
+		present, err := hasColumn(db, m.table, m.column)
+		if err != nil {
+			return fmt.Errorf("inspect %s.%s: %w", m.table, m.column, err)
+		}
+		if present {
+			continue
+		}
+		stmt := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", m.table, m.column, m.definition)
+		if _, err := db.Exec(stmt); err != nil {
+			return fmt.Errorf("add %s.%s: %w", m.table, m.column, err)
+		}
+	}
+	return nil
+}
+
+// hasColumn reports whether table already has the named column.
+func hasColumn(db *sql.DB, table, column string) (bool, error) {
+	rows, err := db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			cid, notNull, primaryKey int
+			name, colType            string
+			defaultValue             any
+		)
+		if err := rows.Scan(&cid, &name, &colType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return false, err
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
+}
+
 // SetInstallDir overrides the default install dir (~/.claude/skills). Used in
 // tests or to relocate where Claude Code looks for user skills.
 func (s *Store) SetInstallDir(dir string) { s.installDir = dir }
 
-func (s *Store) Close() error    { return s.db.Close() }
-func (s *Store) DB() *sql.DB     { return s.db }
-func (s *Store) DataDir() string { return s.dataDir }
+func (s *Store) Close() error       { return s.db.Close() }
+func (s *Store) DB() *sql.DB        { return s.db }
+func (s *Store) DataDir() string    { return s.dataDir }
 func (s *Store) InstallDir() string { return s.installDir }
 
 // SkillsDir is where ingested skill files live.
@@ -106,9 +171,32 @@ func hashBytes(b []byte) string {
 // SOURCES
 // ============================================
 
+// SourceKind says where a source's skills come from, and therefore how Sync
+// obtains them.
+type SourceKind string
+
+const (
+	// SourceKindGit clones or fetches a remote repo into the store's data dir.
+	SourceKindGit SourceKind = "git"
+	// SourceKindLocal reads a directory that already exists on this host, for
+	// skills authored here rather than pulled from upstream. Nothing is cloned
+	// and there is no commit to record.
+	//
+	// LocalPath must not be, or sit inside, the install dir: Install wipes and
+	// rewrites its target, so a source rooted there would have the store
+	// ingesting its own output and destroying the original in the process.
+	SourceKindLocal SourceKind = "local"
+)
+
 type Source struct {
-	ID             int64  `json:"id"`
-	Name           string `json:"name"`
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+	// Kind selects the sync strategy; empty is treated as git for the sake of
+	// rows written before local sources existed.
+	Kind SourceKind `json:"kind"`
+	// LocalPath is the directory to read for a local source, ignored for git.
+	LocalPath string `json:"local_path,omitempty"`
+	// RepoURL is the clone URL for a git source, empty for a local one.
 	RepoURL        string `json:"repo_url"`
 	Branch         string `json:"branch"`
 	Subpath        string `json:"subpath"`
@@ -123,6 +211,9 @@ type Source struct {
 }
 
 func (s *Store) UpsertSource(src *Source) error {
+	if src.Kind == "" {
+		src.Kind = SourceKindGit
+	}
 	if src.Branch == "" {
 		src.Branch = "main"
 	}
@@ -134,13 +225,14 @@ func (s *Store) UpsertSource(src *Source) error {
 	}
 	src.UpdatedAt = now()
 	_, err := s.db.Exec(`
-		INSERT INTO sources (name, repo_url, branch, subpath, trust_tier, license, enabled, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO sources (name, kind, local_path, repo_url, branch, subpath, trust_tier, license, enabled, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(name) DO UPDATE SET
+			kind=excluded.kind, local_path=excluded.local_path,
 			repo_url=excluded.repo_url, branch=excluded.branch, subpath=excluded.subpath,
 			trust_tier=excluded.trust_tier, license=excluded.license, enabled=excluded.enabled,
 			updated_at=excluded.updated_at
-	`, src.Name, src.RepoURL, src.Branch, src.Subpath, src.TrustTier, src.License,
+	`, src.Name, string(src.Kind), src.LocalPath, src.RepoURL, src.Branch, src.Subpath, src.TrustTier, src.License,
 		boolToInt(src.Enabled), src.CreatedAt, src.UpdatedAt)
 	if err != nil {
 		return err
@@ -184,12 +276,17 @@ func (s *Store) MarkSourceSynced(id int64, commit string, skillCount int) error 
 	return err
 }
 
-const sourceCols = `id, name, repo_url, branch, subpath, trust_tier, COALESCE(license,''), COALESCE(last_synced_at,0), COALESCE(last_commit,''), last_skill_count, enabled, created_at, updated_at`
+// sourceCols and scanSource must list the same columns in the same order —
+// the compiler cannot check that, so change them together.
+const sourceCols = `id, name, COALESCE(kind,'git'), COALESCE(local_path,''), repo_url, branch, subpath, trust_tier, COALESCE(license,''), COALESCE(last_synced_at,0), COALESCE(last_commit,''), last_skill_count, enabled, created_at, updated_at`
 
 func scanSource(row interface{ Scan(...any) error }) (*Source, error) {
 	src := &Source{}
-	var enabled int
-	err := row.Scan(&src.ID, &src.Name, &src.RepoURL, &src.Branch, &src.Subpath, &src.TrustTier,
+	var (
+		enabled int
+		kind    string
+	)
+	err := row.Scan(&src.ID, &src.Name, &kind, &src.LocalPath, &src.RepoURL, &src.Branch, &src.Subpath, &src.TrustTier,
 		&src.License, &src.LastSyncedAt, &src.LastCommit, &src.LastSkillCount, &enabled, &src.CreatedAt, &src.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, ErrNotFound
@@ -197,6 +294,7 @@ func scanSource(row interface{ Scan(...any) error }) (*Source, error) {
 	if err != nil {
 		return nil, err
 	}
+	src.Kind = SourceKind(kind)
 	src.Enabled = enabled == 1
 	return src, nil
 }

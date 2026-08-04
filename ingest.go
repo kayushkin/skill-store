@@ -17,19 +17,20 @@ import (
 
 // SyncResult summarizes what happened during a Sync call.
 type SyncResult struct {
-	SourceID    int64    `json:"source_id"`
-	SourceName  string   `json:"source_name"`
-	Commit      string   `json:"commit"`
-	Found       int      `json:"found"`
-	Inserted    int      `json:"inserted"`
-	Updated     int      `json:"updated"`
-	Pruned      int      `json:"pruned"`
-	Errors      []string `json:"errors,omitempty"`
+	SourceID   int64    `json:"source_id"`
+	SourceName string   `json:"source_name"`
+	Commit     string   `json:"commit"`
+	Found      int      `json:"found"`
+	Inserted   int      `json:"inserted"`
+	Updated    int      `json:"updated"`
+	Pruned     int      `json:"pruned"`
+	Errors     []string `json:"errors,omitempty"`
 }
 
-// Sync clones/updates the source's repo and ingests all SKILL.md files beneath
-// its configured subpath. Skill files are copied into the store's data dir
-// keyed by the skill's DB id. Pruning removes skills that disappeared upstream.
+// Sync ingests every SKILL.md beneath the source's configured subpath. A git
+// source is cloned or updated first; a local source is read where it lies. Skill
+// files are copied into the store's data dir keyed by the skill's DB id, and
+// pruning removes skills that have disappeared from the source.
 func (s *Store) Sync(sourceID int64) (*SyncResult, error) {
 	src, err := s.GetSource(sourceID)
 	if err != nil {
@@ -39,17 +40,16 @@ func (s *Store) Sync(sourceID int64) (*SyncResult, error) {
 		return nil, fmt.Errorf("source %s is disabled", src.Name)
 	}
 
-	repoDir := filepath.Join(s.ReposDir(), src.Name)
-	commit, err := syncRepo(src, repoDir)
+	rootDir, commit, err := s.sourceRoot(src)
 	if err != nil {
-		return nil, fmt.Errorf("git sync %s: %w", src.Name, err)
+		return nil, err
 	}
 
 	res := &SyncResult{SourceID: sourceID, SourceName: src.Name, Commit: commit}
 
-	searchRoot := repoDir
+	searchRoot := rootDir
 	if src.Subpath != "" {
-		searchRoot = filepath.Join(repoDir, src.Subpath)
+		searchRoot = filepath.Join(rootDir, src.Subpath)
 	}
 	if _, err := os.Stat(searchRoot); err != nil {
 		return nil, fmt.Errorf("subpath %s not found in %s", src.Subpath, src.Name)
@@ -71,7 +71,7 @@ func (s *Store) Sync(sourceID int64) (*SyncResult, error) {
 		if d.Name() != "SKILL.md" {
 			return nil
 		}
-		sk, inserted, ierr := s.ingestSkillFile(src, repoDir, path, commit)
+		sk, inserted, ierr := s.ingestSkillFile(src, rootDir, path, commit)
 		if ierr != nil {
 			res.Errors = append(res.Errors, fmt.Sprintf("%s: %v", path, ierr))
 			return nil
@@ -106,9 +106,83 @@ func (s *Store) Sync(sourceID int64) (*SyncResult, error) {
 	return res, nil
 }
 
+// sourceRoot returns the directory to walk for a source's SKILL.md files, and
+// the commit to stamp on the skills it yields.
+//
+// A git source is cloned or fetched into the store's own data dir and reports
+// the checked-out SHA. A local source is read where it already lives and has no
+// commit — its skills are authored here, not pulled from anywhere.
+func (s *Store) sourceRoot(src *Source) (rootDir, commit string, err error) {
+	switch src.Kind {
+	case SourceKindLocal:
+		if src.LocalPath == "" {
+			return "", "", fmt.Errorf("source %s is local but has no local_path", src.Name)
+		}
+		root, err := filepath.Abs(src.LocalPath)
+		if err != nil {
+			return "", "", fmt.Errorf("resolve local_path for %s: %w", src.Name, err)
+		}
+		if err := s.refuseInstallDir(src.Name, root); err != nil {
+			return "", "", err
+		}
+		info, err := os.Stat(root)
+		if err != nil {
+			return "", "", fmt.Errorf("local_path for %s: %w", src.Name, err)
+		}
+		if !info.IsDir() {
+			return "", "", fmt.Errorf("local_path for %s is not a directory: %s", src.Name, root)
+		}
+		return root, "", nil
+	case SourceKindGit, "":
+		root := filepath.Join(s.ReposDir(), src.Name)
+		commit, err := syncRepo(src, root)
+		if err != nil {
+			return "", "", fmt.Errorf("git sync %s: %w", src.Name, err)
+		}
+		return root, commit, nil
+	default:
+		return "", "", fmt.Errorf("source %s has unknown kind %q", src.Name, src.Kind)
+	}
+}
+
+// refuseInstallDir rejects a local source rooted at, inside, or above the
+// install dir.
+//
+// Install wipes and rewrites its target directory. A source overlapping that
+// target would have the store ingesting the files it just wrote and destroying
+// the authored originals on the next install — so this is a hard error at sync
+// time rather than a caveat in the docs.
+func (s *Store) refuseInstallDir(name, root string) error {
+	installDir, err := filepath.Abs(s.installDir)
+	if err != nil {
+		return fmt.Errorf("resolve install dir: %w", err)
+	}
+	if overlaps(root, installDir) {
+		return fmt.Errorf(
+			"local source %s is rooted at %s, which overlaps the install dir %s; "+
+				"author skills outside the install dir so installing them cannot overwrite the source",
+			name, root, installDir)
+	}
+	return nil
+}
+
+// overlaps reports whether either path is the other, or contains it.
+func overlaps(a, b string) bool {
+	return a == b || isWithin(a, b) || isWithin(b, a)
+}
+
+// isWithin reports whether child sits under parent.
+func isWithin(child, parent string) bool {
+	rel, err := filepath.Rel(parent, child)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
 // ingestSkillFile parses a SKILL.md, upserts the skill row, and copies
 // sibling files into the store's files dir for that skill.
-func (s *Store) ingestSkillFile(src *Source, repoDir, skillMDPath, commit string) (*Skill, bool, error) {
+func (s *Store) ingestSkillFile(src *Source, rootDir, skillMDPath, commit string) (*Skill, bool, error) {
 	body, err := os.ReadFile(skillMDPath)
 	if err != nil {
 		return nil, false, err
@@ -122,7 +196,7 @@ func (s *Store) ingestSkillFile(src *Source, repoDir, skillMDPath, commit string
 		name = filepath.Base(filepath.Dir(skillMDPath))
 	}
 	skillDir := filepath.Dir(skillMDPath)
-	relPath, err := filepath.Rel(repoDir, skillDir)
+	relPath, err := filepath.Rel(rootDir, skillDir)
 	if err != nil {
 		relPath = skillDir
 	}

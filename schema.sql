@@ -7,10 +7,15 @@ PRAGMA foreign_keys = ON;
 -- SOURCES (upstream repos that ship skills)
 -- ============================================
 
+-- NOTE: this file only ever runs as CREATE TABLE IF NOT EXISTS, so it reaches a
+-- fresh database and no other. A column added here alone is invisible to every
+-- database that already has the table. Add it to the migrations in store.go too.
 CREATE TABLE IF NOT EXISTS sources (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT UNIQUE NOT NULL,            -- e.g. "anthropics", "antigravity"
-    repo_url TEXT NOT NULL,                -- https://github.com/anthropics/skills.git
+    kind TEXT NOT NULL DEFAULT 'git',     -- 'git' (clone a remote) | 'local' (read a directory on this host)
+    local_path TEXT NOT NULL DEFAULT '',  -- directory to read for kind='local'; must not overlap the install dir
+    repo_url TEXT NOT NULL,                -- https://github.com/anthropics/skills.git; empty for kind='local'
     branch TEXT NOT NULL DEFAULT 'main',
     subpath TEXT NOT NULL DEFAULT '',      -- directory within repo where skills live, e.g. "skills"
     trust_tier TEXT NOT NULL DEFAULT 'community',  -- 'official' | 'community' | 'personal'
