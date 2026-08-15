@@ -175,10 +175,28 @@ CASES = [
           "\tif false {\n\t\treturn nil, nil\n\t}\n")],
     ),
     Case(
-        # The inner check — the one that actually decides what reaches the manifest.
-        "the per-file $HOME check is dropped, so the manifest emits an install_path it cannot rewrite",
+        # ⚠️ Declared unnoticeable rather than left to score as a gap, because it is
+        # dominated BY CONSTRUCTION and no test can separate it. WalkDir yields paths
+        # prefixed by inst.TargetPath, and the outer check has already established
+        # TargetPath starts with home+sep — so by the time installPathRelative runs,
+        # HasPrefix(path, prefix) cannot be false. Reaching it means removing the outer
+        # check, and the case above already scores that.
+        #
+        # The engine contradicts this declaration in BOTH directions, which is the point
+        # of writing it down: if someone deletes the outer check, this row starts
+        # reporting CAUGHT and the run says the declaration has expired.
+        "the per-file $HOME prefix check is dropped",
         [("\tprefix := home + string(os.PathSeparator)\n\tif !strings.HasPrefix(path, prefix) {\n\t\treturn \"\", false\n\t}\n",
           "\tprefix := home + string(os.PathSeparator)\n\tif false {\n\t\treturn \"\", false\n\t}\n")],
+        expected_unnoticed=("the outer check in snapshotInstallation guarantees it: every walked path "
+                            "is under inst.TargetPath, which is already known to be under home"),
+    ),
+    Case(
+        # The reachable half of the same function, and the one that decides what a
+        # machine actually receives.
+        "the dot-dot filter is dropped, so a file the store silently refuses to seed is seeded after all",
+        [('\tif rel == "" || strings.Contains(rel, "..") {\n\t\treturn "", false\n\t}\n',
+          '\tif rel == "" {\n\t\treturn "", false\n\t}\n')],
     ),
 
     # ---- the route ----

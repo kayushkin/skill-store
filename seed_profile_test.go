@@ -499,6 +499,57 @@ func TestAnInstallationOutsideHomeIsNotEvenRead(t *testing.T) {
 	}
 }
 
+// ⚠️ CHARACTERISATION, not an endorsement. installPathRelative rejects any
+// relative path CONTAINING "..", and it is applied to a path produced by walking
+// the install directory — so the substring can only be part of a real file's
+// name, never a traversal. A skill shipping `notes..md` therefore gets a version
+// row written (the store believes it captured the file) and no manifest entry
+// (no machine is ever sent it). Nothing logs the discrepancy.
+//
+// This test pins today's behaviour so the silent drop cannot widen unnoticed. It
+// is filed rather than fixed because the repair has several plausible shapes —
+// compare cleaned paths, split on the separator and match a ".." COMPONENT, or
+// drop the check as redundant given the containment check above it — and picking
+// one unattended would be a guess. See the noteboard card named in the failure
+// message.
+func TestAFileWhoseNameContainsDotDotIsCapturedButNeverSeeded(t *testing.T) {
+	s := seedTestStore(t)
+	installOneSkill(t, s, "browser-automation")
+
+	insts, err := s.ListInstallations()
+	if err != nil || len(insts) != 1 {
+		t.Fatalf("installations: %v (%d)", err, len(insts))
+	}
+	awkward := filepath.Join(insts[0].TargetPath, "notes..md")
+	if err := os.WriteFile(awkward, []byte("real content"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	mf, err := s.BuildSeedManifest("box")
+	if err != nil {
+		t.Fatalf("manifest: %v", err)
+	}
+	for _, e := range mf.Entries {
+		if e.Relpath == "notes..md" {
+			t.Fatal("notes..md now reaches the manifest. If that was the intended fix, " +
+				"delete this characterisation; it exists to record that it did NOT.")
+		}
+	}
+
+	// The half that makes the drop silent rather than merely strict: the bytes
+	// were read and version-logged, so the store's own records show the file as
+	// captured while no machine will ever receive it.
+	var n int
+	if err := s.DB().QueryRow(
+		`SELECT count(*) FROM seed_file_versions WHERE relpath=?`, "notes..md").Scan(&n); err != nil {
+		t.Fatalf("count versions: %v", err)
+	}
+	if n == 0 {
+		t.Fatal("notes..md is no longer version-logged either — the drop is now consistent, " +
+			"which is a change in behaviour this test was written to detect")
+	}
+}
+
 // Every manifest entry must point at a real version row holding that file's
 // bytes, since the runner fetches content by version id. An entry with
 // version_id 0 is a path the runner cannot resolve.
