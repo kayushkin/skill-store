@@ -431,7 +431,7 @@ func TestTheRouteRefusesAnUnparseableBodyRatherThanReadingItAsOff(t *testing.T) 
 	}
 }
 
-// The manifest only describes files under $HOME: snapshotInstallation refuses to
+// The manifest only describes files under $HOME: installPathRelative refuses to
 // emit an install_path it cannot rewrite as $HOME-relative. That refusal is why
 // seedTestStore sets HOME, and pinning it here stops a later change to the
 // manifest tests silently reducing them to assertions about nothing.
@@ -455,6 +455,47 @@ func TestAnInstallationOutsideHomeIsNotSeeded(t *testing.T) {
 	}
 	if len(outside.Entries) != 0 {
 		t.Fatalf("an installation outside HOME produced %d entries, want 0", len(outside.Entries))
+	}
+}
+
+// snapshotInstallation checks $HOME containment TWICE, and only the outer check
+// is measurable here.
+//
+// The inner one (installPathRelative, pinned above) drops the ENTRY, but by then
+// the walk has already read the file and called AppendSeedVersion on it. The
+// outer one returns before the walk starts. So deleting the outer check changes
+// no manifest anyone can see — the entry list is identical, because the inner
+// check catches every file the outer one would have — and the only separating
+// observation is the version log quietly growing a row for a file the store has
+// just decided it will not seed.
+//
+// Measured, not assumed: with the outer check forced false, an out-of-HOME
+// installation yields 0 entries and 1 new seed_file_versions row.
+//
+// Without this test the outer check is dominated everywhere a manifest-shaped
+// assertion would look, and a scorer reports it as a coverage hole in tests that
+// are otherwise complete.
+func TestAnInstallationOutsideHomeIsNotEvenRead(t *testing.T) {
+	s := seedTestStore(t)
+	installOneSkill(t, s, "browser-automation")
+	t.Setenv("HOME", t.TempDir())
+
+	countVersions := func() int {
+		t.Helper()
+		var n int
+		if err := s.DB().QueryRow(`SELECT count(*) FROM seed_file_versions`).Scan(&n); err != nil {
+			t.Fatalf("count versions: %v", err)
+		}
+		return n
+	}
+	before := countVersions()
+	if _, err := s.BuildSeedManifest("box"); err != nil {
+		t.Fatalf("manifest: %v", err)
+	}
+	if after := countVersions(); after != before {
+		t.Fatalf("building a manifest for an installation outside HOME wrote %d version rows "+
+			"(%d -> %d); the directory should not have been walked at all",
+			after-before, before, after)
 	}
 }
 

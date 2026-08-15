@@ -82,7 +82,7 @@ more; it is not a statement that the rest is covered.
 declaration is made below, because an empty one would read as "measured and
 found none" rather than "not measured". The next pass on this repo owns that.
 
-Score when filed by the 222nd pass: 16/16 real mechanisms caught, both controls
+Score when filed by the 222nd pass: 18/18 real mechanisms caught, both controls
 behaved, exit 0.
 """
 
@@ -161,9 +161,24 @@ CASES = [
         [("\t\tEnabled:   prof.Enabled,\n", "\t\tEnabled:   true,\n")],
     ),
     Case(
-        "the $HOME containment check is dropped, so the manifest emits an install_path it cannot rewrite",
+        # ⚠️ This case was first named "...so the manifest emits an install_path it
+        # cannot rewrite", which is FALSE, and it scored UNNOTICED against a test that
+        # asserted exactly that. $HOME containment is checked TWICE: this outer check
+        # skips the installation, and installPathRelative inside the walk drops the
+        # entry. The inner one dominates the entry list completely — deleting this one
+        # changes no manifest anyone can read. What it does change is that the walk now
+        # RUNS, calling AppendSeedVersion on every file before the entry is discarded.
+        # Measured: 0 entries either way, 1 spurious version row. The separating
+        # observation is the version log, not the manifest.
+        "the outer $HOME check is dropped, so an installation outside HOME is walked and version-logged before its entries are discarded",
         [("\tif !strings.HasPrefix(inst.TargetPath, home+string(os.PathSeparator)) {\n\t\treturn nil, nil\n\t}\n",
           "\tif false {\n\t\treturn nil, nil\n\t}\n")],
+    ),
+    Case(
+        # The inner check — the one that actually decides what reaches the manifest.
+        "the per-file $HOME check is dropped, so the manifest emits an install_path it cannot rewrite",
+        [("\tprefix := home + string(os.PathSeparator)\n\tif !strings.HasPrefix(path, prefix) {\n\t\treturn \"\", false\n\t}\n",
+          "\tprefix := home + string(os.PathSeparator)\n\tif false {\n\t\treturn \"\", false\n\t}\n")],
     ),
 
     # ---- the route ----
