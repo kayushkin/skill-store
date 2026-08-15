@@ -34,3 +34,11 @@ secrets.*
 # re-include through an excluded directory.
 !*.go
 !*.sql
+
+# Byte-compiled scorer modules. scripts/sabotage.py is imported by every
+# sabotage-*.py plan, so running any scorer writes a .pyc here and leaves the
+# tree dirty. One was committed by accident on 2026-08-15; a permanently dirty
+# status is read by the next unattended pass as another agent working in this
+# repo, which is the one signal it uses to decide not to touch it.
+__pycache__/
+*.pyc

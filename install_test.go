@@ -322,6 +322,45 @@ func TestReinstallingTheSkillThatAlreadyOwnsTheTargetIsNotAConflict(t *testing.T
 	}
 }
 
+// The upsert conflicts on skill_id and updates target_path from the excluded
+// row. That UPDATE is the only thing that moves an installation's recorded
+// location, and the install dir is configurable — so a skill reinstalled after
+// the dir moves must end up owning its new directory. If the row keeps pointing
+// at the old one, Uninstall deletes the abandoned copy and leaves the live one.
+func TestReinstallingAfterTheInstallDirMovesUpdatesTheRecordedTarget(t *testing.T) {
+	s := newTestStore(t)
+	id := ingestOneSkill(t, s, "src", "alpha", "alpha", nil)
+	first, err := s.Install(id, false)
+	if err != nil {
+		t.Fatalf("first install: %v", err)
+	}
+
+	moved := filepath.Join(filepath.Dir(s.InstallDir()), "install-moved")
+	s.SetInstallDir(moved)
+	second, err := s.Install(id, false)
+	if err != nil {
+		t.Fatalf("reinstall after move: %v", err)
+	}
+	if second.TargetPath == first.TargetPath {
+		t.Fatalf("the target did not move: still %s", first.TargetPath)
+	}
+
+	target, _, found := installationRow(t, s, id)
+	if !found {
+		t.Fatal("no installations row after the reinstall")
+	}
+	if target != second.TargetPath {
+		t.Fatalf("row still records %s, but the skill was installed to %s; "+
+			"Uninstall would remove the abandoned copy and leave the live one", target, second.TargetPath)
+	}
+	if _, err := s.Uninstall(id); err != nil {
+		t.Fatalf("uninstall: %v", err)
+	}
+	if _, err := os.Stat(second.TargetPath); !os.IsNotExist(err) {
+		t.Fatalf("uninstall left the live directory behind (stat err = %v)", err)
+	}
+}
+
 func TestInstallingASkillThatDoesNotExistWritesNothing(t *testing.T) {
 	s := newTestStore(t)
 
@@ -553,6 +592,20 @@ func TestTheUninstallRouteRemovesTheDirectoryAndTheRow(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	// The status code is 200 whether the route removed something or found
+	// nothing to remove, so the body is the only thing that distinguishes them.
+	// A route that always answers not-installed tells an operator their
+	// uninstall was a no-op while it deletes the directory.
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body["status"] == "not-installed" {
+		t.Fatalf("the route reported not-installed for a skill it did uninstall: %v", body)
+	}
+	if body["target_path"] != inst.TargetPath {
+		t.Fatalf("route reported target_path %v, want %s", body["target_path"], inst.TargetPath)
 	}
 	if _, err := os.Stat(inst.TargetPath); !os.IsNotExist(err) {
 		t.Fatalf("the route answered 200 and the directory is still there (stat err = %v)", err)
