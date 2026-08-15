@@ -664,7 +664,7 @@ func TestTheInstallationsRouteReportsWhatIsInstalled(t *testing.T) {
 // ---- two characterisations: behaviour that is filed, not fixed ----
 
 // ⛔ CHARACTERISATION, not an endorsement. Filed as noteboard card
-// 4c6e4e0e-3b2f-4e2c-9d64-7c1f0e5b2a91 (decision-needed).
+// e5ed5958-ce79-4f89-b4e1-2f64967bbaeb (decision-needed).
 //
 // A skill's name comes from the `name:` field of an ingested SKILL.md — that is,
 // from whatever upstream repository was synced. Install joins it onto installDir
