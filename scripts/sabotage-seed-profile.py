@@ -82,8 +82,8 @@ more; it is not a statement that the rest is covered.
 declaration is made below, because an empty one would read as "measured and
 found none" rather than "not measured". The next pass on this repo owns that.
 
-Score when filed by the 222nd pass: 18/18 real mechanisms caught, both controls
-behaved, exit 0.
+Score when filed by the 222nd pass: 18/19 real mechanisms caught, the 19th
+declared unnoticeable with its reason, both controls behaved, exit 0.
 """
 
 import sys
