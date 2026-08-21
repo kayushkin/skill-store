@@ -357,7 +357,7 @@ func (s *Store) UpsertSkill(sk *Skill) (bool, error) {
 	`, sk.SourceID, sk.Name, sk.DisplayName, sk.Description, sk.SkillMD, sk.SourcePath, sk.SourceCommit,
 		sk.ContentHash, sk.FileCount, tagsJSON, boolToInt(sk.Enabled), sk.CreatedAt, sk.UpdatedAt)
 	if err != nil {
-		return false, err
+		return false, wrapForeignKeyViolation(err, "source", sk.SourceID)
 	}
 	sk.ID, _ = res.LastInsertId()
 	return true, nil

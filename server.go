@@ -459,6 +459,10 @@ func (h *handler) postSeedObserve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.s.RecordObservedHash(body.MachineID, body.SkillID, body.Relpath, body.SHA256); err != nil {
+		if errors.Is(err, ErrReferencedRowNotFound) {
+			writeErr(w, 404, "skill not found")
+			return
+		}
 		writeErr(w, 500, err.Error())
 		return
 	}
@@ -483,10 +487,18 @@ func (h *handler) postSeedDrift(w http.ResponseWriter, r *http.Request) {
 	}
 	v, err := h.s.AppendSeedVersion(body.SkillID, body.Relpath, []byte(body.Content), SeedSourceRunnerDrift, body.MachineID, body.Note)
 	if err != nil {
+		if errors.Is(err, ErrReferencedRowNotFound) {
+			writeErr(w, 404, "skill not found")
+			return
+		}
 		writeErr(w, 500, err.Error())
 		return
 	}
 	if err := h.s.RecordObservedHash(body.MachineID, body.SkillID, body.Relpath, v.SHA256); err != nil {
+		if errors.Is(err, ErrReferencedRowNotFound) {
+			writeErr(w, 404, "skill not found")
+			return
+		}
 		writeErr(w, 500, err.Error())
 		return
 	}

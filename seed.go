@@ -67,6 +67,9 @@ func (s *Store) AppendSeedVersion(skillID int64, relpath string, content []byte,
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, skillID, relpath, sha, int64(len(content)), content, source, machinePtr, notePtr, now())
 	if err != nil {
+		if wrapped := wrapForeignKeyViolation(err, "skill", skillID); wrapped != err {
+			return nil, wrapped
+		}
 		return nil, fmt.Errorf("insert version: %w", err)
 	}
 	id, _ := res.LastInsertId()
@@ -201,7 +204,7 @@ func (s *Store) RecordObservedHash(machineID string, skillID int64, relpath, sha
 		ON CONFLICT(machine_id, skill_id, relpath) DO UPDATE SET
 			observed_sha=excluded.observed_sha, observed_at=excluded.observed_at
 	`, machineID, skillID, relpath, sha, now())
-	return err
+	return wrapForeignKeyViolation(err, "skill", skillID)
 }
 
 // ============================================

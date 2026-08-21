@@ -1,6 +1,17 @@
 -- skill-store schema
 -- Registry of Claude Code / Agent SKILL.md skills, ingested from upstream repos.
 
+-- ⚠️ This line is NOT what enforces the foreign keys below, and it must not be
+-- read as if it were. foreign_keys is a per-connection setting and this file is
+-- executed once, through a *sql.DB pool, so it reaches whichever single
+-- connection served the migration. Measured on this schema, 8 connections held
+-- open at once: with this line alone, 1 of 8 enforced. It reads back as 1 on the
+-- connection that ran it, so checking the pragma there confirms nothing.
+--
+-- The mechanism is the "_foreign_keys=on" parameter in the DSN in store.go,
+-- which the driver applies to every connection it opens (8 of 8 measured).
+-- TestEveryPooledConnectionEnforcesForeignKeys pins that. Keep this line for a
+-- direct sqlite3 session on the file; do not treat it as the guarantee.
 PRAGMA foreign_keys = ON;
 
 -- ============================================
