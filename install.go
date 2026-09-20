@@ -13,6 +13,58 @@ import (
 // at the target path. Uninstall the existing one first (or retry with force).
 var ErrInstallConflict = errors.New("another skill is already installed at this target")
 
+// ErrInstallTargetEscapesInstallDir is returned when the directory an install
+// or uninstall is about to erase does not sit strictly inside the install dir.
+//
+// Install and Uninstall both begin with os.RemoveAll on a path derived from a
+// skill's name, and a skill's name comes from an ingested upstream SKILL.md
+// rather than from anything this host controls. So the containment check runs
+// BEFORE the destructive call, not after it: whatever policy eventually governs
+// bad names, a directory this store has not proved is its own must not be
+// erased on the way to finding out.
+var ErrInstallTargetEscapesInstallDir = errors.New("install target is outside the install dir")
+
+// installTargetForName resolves the directory a skill of this name installs
+// into, and refuses to name one that escapes the install dir.
+//
+// "Strictly inside" is the contract, and equality is a refusal rather than an
+// oversight: a skill named "." resolves to the install dir itself, and erasing
+// that removes every installed skill on the machine in one call.
+func (s *Store) installTargetForName(name string) (string, error) {
+	installDir, err := filepath.Abs(s.installDir)
+	if err != nil {
+		return "", fmt.Errorf("resolve install dir: %w", err)
+	}
+	target := filepath.Clean(filepath.Join(installDir, name))
+	if target == installDir || !isWithin(target, installDir) {
+		return "", fmt.Errorf("%w: skill name %q resolves to %s, which is not inside %s",
+			ErrInstallTargetEscapesInstallDir, name, target, installDir)
+	}
+	return target, nil
+}
+
+// refuseUninstallOutsideInstallDir rejects a recorded target path that does not
+// sit strictly inside the install dir.
+//
+// Uninstall erases a path it read back from the installations table, and rows
+// written before installTargetForName existed can hold an escaping path. The
+// stored value is therefore checked on the way out as well as on the way in.
+func (s *Store) refuseUninstallOutsideInstallDir(target string) error {
+	installDir, err := filepath.Abs(s.installDir)
+	if err != nil {
+		return fmt.Errorf("resolve install dir: %w", err)
+	}
+	abs, err := filepath.Abs(target)
+	if err != nil {
+		return fmt.Errorf("resolve target: %w", err)
+	}
+	if abs == installDir || !isWithin(abs, installDir) {
+		return fmt.Errorf("%w: recorded target %s is not inside %s",
+			ErrInstallTargetEscapesInstallDir, abs, installDir)
+	}
+	return nil
+}
+
 // Installation mirrors the installations table for API responses.
 type Installation struct {
 	SkillID     int64  `json:"skill_id"`
@@ -26,12 +78,25 @@ type Installation struct {
 // <installDir>/<name>/. If another skill already occupies that target path, it
 // returns ErrInstallConflict unless force is true (in which case the previous
 // skill is uninstalled first).
+//
+// A skill whose name does not resolve to a directory strictly inside the
+// install dir is refused with ErrInstallTargetEscapesInstallDir, before
+// anything is erased. What such a name should mean otherwise — refuse it at
+// ingest, refuse it here, or reduce it to one safe segment — is still open;
+// this only fixes the order, so the answer is not reached through a directory
+// that has already been deleted.
 func (s *Store) Install(skillID int64, force bool) (*Installation, error) {
 	sk, err := s.GetSkill(skillID)
 	if err != nil {
 		return nil, err
 	}
-	target := filepath.Join(s.installDir, sk.Name)
+	// Establish that the target is inside the install dir BEFORE anything
+	// erases it. sk.Name is upstream data; the os.RemoveAll below is not
+	// recoverable.
+	target, err := s.installTargetForName(sk.Name)
+	if err != nil {
+		return nil, err
+	}
 
 	// Check for another installation at this target path.
 	var existingSkillID int64
@@ -89,6 +154,10 @@ func (s *Store) Install(skillID int64, force bool) (*Installation, error) {
 
 // Uninstall removes the skill's install directory and its installations row.
 // Returns (installation, nil) if it was installed, (nil, nil) if not.
+//
+// The recorded target path is re-checked against the install dir before it is
+// removed: a row written before Install started checking can name a directory
+// outside it, and that row is read back verbatim.
 func (s *Store) Uninstall(skillID int64) (*Installation, error) {
 	var target string
 	var installedAt int64
@@ -97,6 +166,9 @@ func (s *Store) Uninstall(skillID int64) (*Installation, error) {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
+		return nil, err
+	}
+	if err := s.refuseUninstallOutsideInstallDir(target); err != nil {
 		return nil, err
 	}
 	if err := os.RemoveAll(target); err != nil {
