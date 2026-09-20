@@ -115,13 +115,13 @@ CASES = [
     # ---- where the files go ----
     Case(
         "the target drops the skill name, so every skill installs over the same directory",
-        [("\ttarget := filepath.Join(s.installDir, sk.Name)",
-          "\ttarget := s.installDir")],
+        [("\ttarget, err := s.installTargetForName(sk.Name)",
+          "\ttarget, err := s.installDir, error(nil)")],
     ),
     Case(
         "the target is built from the skill id instead of its name, so nothing lands where the runner looks",
-        [("\ttarget := filepath.Join(s.installDir, sk.Name)",
-          '\ttarget := filepath.Join(s.installDir, fmt.Sprint(sk.ID))')],
+        [("\ttarget, err := s.installTargetForName(sk.Name)",
+          '\ttarget, err := s.installTargetForName(fmt.Sprint(sk.ID))')],
     ),
 
     # ---- effect one: the files ----
@@ -282,8 +282,8 @@ CASES = [
     # deleting the line, per the case rules.
     Case(
         "CONTROL known-positive: every install lands one directory deeper than it reports",
-        [("\ttarget := filepath.Join(s.installDir, sk.Name)",
-          "\ttarget := filepath.Join(s.installDir, sk.Name, \"nested\")")],
+        [("\ttarget := filepath.Clean(filepath.Join(installDir, name))",
+          "\ttarget := filepath.Clean(filepath.Join(installDir, name, \"nested\"))")],
     ),
     # Known-negative: the wording of the conflict error. The suite matches it
     # with errors.Is and asserts the 409, never the sentence.
