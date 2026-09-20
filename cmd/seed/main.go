@@ -9,8 +9,8 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"os"
 
+	"github.com/kayushkin/llm-bridge/servicesettings"
 	skillstore "github.com/kayushkin/skill-store"
 )
 
@@ -43,7 +43,15 @@ func main() {
 	noSync := flag.Bool("no-sync", false, "register sources but do not sync")
 	flag.Parse()
 
-	store, err := skillstore.Open(os.Getenv("SKILL_STORE_DATA_DIR"))
+	// The same declarations the server reads, so this command writes into the
+	// directory the server will serve from, and refuses the same misspellings.
+	// It mounts no route: GET /settings is the server's.
+	settings, err := skillstore.NewSettingsRegistry(servicesettings.ProcessEnvironment())
+	if err != nil {
+		log.Fatalf("read settings: %v", err)
+	}
+
+	store, err := skillstore.Open(settings.String(skillstore.SettingDataDirectory))
 	if err != nil {
 		log.Fatalf("open store: %v", err)
 	}

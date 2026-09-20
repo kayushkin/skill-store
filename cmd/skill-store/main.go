@@ -10,31 +10,32 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/kayushkin/llm-bridge/servicesettings"
 	skillstore "github.com/kayushkin/skill-store"
 )
 
 func main() {
-	addr := os.Getenv("SKILL_STORE_ADDR")
-	if addr == "" {
-		addr = ":8301"
+	settings, err := skillstore.NewSettingsRegistry(servicesettings.ProcessEnvironment())
+	if err != nil {
+		log.Fatalf("read settings: %v", err)
 	}
-	dataDir := os.Getenv("SKILL_STORE_DATA_DIR")
+	addr := settings.String(skillstore.SettingListenAddress)
 
-	store, err := skillstore.Open(dataDir)
+	store, err := skillstore.Open(settings.String(skillstore.SettingDataDirectory))
 	if err != nil {
 		log.Fatalf("open store: %v", err)
 	}
 	defer store.Close()
 
-	// Where installed skills are copied. Defaults to ~/.claude/skills; an
+	// Where installed skills are copied. With nothing set the setting carries
+	// DefaultInstallDir(), which is what Open already put on the store; an
 	// override is what lets a test drive the install/uninstall/seed routes
 	// without writing into the live skills directory.
-	if installDir := os.Getenv("SKILL_STORE_INSTALL_DIR"); installDir != "" {
-		store.SetInstallDir(installDir)
-	}
+	store.SetInstallDir(settings.String(skillstore.SettingInstallDirectory))
 
 	mux := http.NewServeMux()
 	skillstore.RegisterHandlers(mux, store)
+	skillstore.RegisterSettingsHandler(mux, settings)
 
 	srv := &http.Server{
 		Addr:              addr,

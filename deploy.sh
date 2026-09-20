@@ -21,6 +21,18 @@ echo "==> Building $BINARY..."
 go build -o "$BINARY" ./cmd/skill-store
 echo "    built: $(ls -lh "$BINARY" | awk '{print $5}')"
 
+# A set SKILL_STORE_ADDR…, SKILL_STORE_DATA_DIR… or SKILL_STORE_INSTALL_DIR…
+# variable that settings.go does not declare stops the new binary at boot. Ask
+# before the old one is stopped: build the registry from the running service's
+# own environment. The test prints a verdict, never a value.
+echo "==> Checking the running service's environment against the declared settings..."
+live_pid="$(systemctl --user show -p MainPID --value "$SERVICE")"
+if [ -n "$live_pid" ] && [ "$live_pid" != "0" ]; then
+  go test -count=1 -run '^TestTheLiveProcessEnvironmentBuildsARegistry$' . -args -live-environment-file="/proc/$live_pid/environ"
+else
+  echo "    $SERVICE is not running, so there is no environment to check"
+fi
+
 echo "==> Stopping $SERVICE..."
 systemctl --user stop "$SERVICE" 2>/dev/null || true
 sleep 1
