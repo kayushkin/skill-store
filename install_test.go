@@ -661,54 +661,13 @@ func TestTheInstallationsRouteReportsWhatIsInstalled(t *testing.T) {
 	}
 }
 
-// ---- two characterisations: behaviour that is filed, not fixed ----
-
-// ⛔ CHARACTERISATION, not an endorsement. Filed as noteboard card
-// e5ed5958-ce79-4f89-b4e1-2f64967bbaeb (decision-needed).
+// ---- a characterisation: behaviour that is filed, not fixed ----
 //
-// A skill's name comes from the `name:` field of an ingested SKILL.md — that is,
-// from whatever upstream repository was synced. Install joins it onto installDir
-// as a path segment with no containment check, and the FIRST thing it does with
-// the result is os.RemoveAll. So a skill named `../victim` deletes a sibling of
-// the install directory and installs itself there.
-//
-// The live install dir is ~/.claude/skills, so `name: ..` clears every installed
-// skill and `name: ../../repos` reaches ~/repos. Measured on the live database
-// when this was written: 1,446 skills ingested, none carrying a separator or a
-// dot-dot, so the defect is latent rather than live.
-//
-// This test asserts what the code does TODAY so it cannot change unnoticed. When
-// containment is added it will fail, and that failure is the signal to delete it
-// — see the card for the three candidate repairs (reject at ingest, reject at
-// install, or sanitise the name into a single safe segment).
-func TestASkillNameIsUsedAsAPathSegmentWithNoContainmentCheck(t *testing.T) {
-	s := newTestStore(t)
-	outside := filepath.Join(filepath.Dir(s.InstallDir()), "not-the-install-dir")
-	if err := os.MkdirAll(outside, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	bystander := filepath.Join(outside, "bystander.txt")
-	if err := os.WriteFile(bystander, []byte("owned by something else"), 0o644); err != nil {
-		t.Fatalf("write: %v", err)
-	}
+// Its sibling, the path-traversal characterisation, was deleted when the
+// containment guard landed; install_containment_test.go replaces it.
 
-	id := ingestOneSkill(t, s, "src", "escaper", "../not-the-install-dir", nil)
-	inst, err := s.Install(id, false)
-	if err != nil {
-		t.Fatalf("install: %v", err)
-	}
-
-	if strings.HasPrefix(inst.TargetPath, s.InstallDir()+string(os.PathSeparator)) {
-		t.Fatalf("the target is now contained in the install dir (%s) — the traversal has been "+
-			"fixed, so delete this characterisation and close its card", inst.TargetPath)
-	}
-	if _, err := os.Stat(bystander); !os.IsNotExist(err) {
-		t.Fatalf("the bystander file survived (stat err = %v) — Install no longer removes its "+
-			"target before writing, or containment was added; re-read the card either way", err)
-	}
-}
-
-// ⛔ CHARACTERISATION, not an endorsement. Filed on the same card.
+// ⛔ CHARACTERISATION, not an endorsement. Filed on noteboard card
+// e5ed5958-ce79-4f89-b4e1-2f64967bbaeb.
 //
 // installations.skill_id carries ON DELETE CASCADE, so pruning a skill deletes
 // the row that records where it was installed — but nothing removes the
