@@ -32,7 +32,7 @@
 # safe to run at all: without an override the server copies skills straight into
 # the live ~/.claude/skills. It is deliberately NOT $FAKE_HOME/.claude/skills —
 # pointing it somewhere the default could never produce is what proves the env
-# var is actually honoured rather than coincidentally agreeing with the default,
+# var is actually honored rather than coincidentally agreeing with the default,
 # and the run asserts $FAKE_HOME/.claude is never created.
 #
 # HOME is still redirected, for two reasons: BuildSeedManifest rewrites
@@ -71,7 +71,7 @@ DATA_DIR="$TMP_DIR/data"
 FAKE_HOME="$TMP_DIR/home"
 # Under $FAKE_HOME (BuildSeedManifest skips installs outside $HOME) but NOT at
 # the default .claude/skills — so the install assertions below can only pass if
-# SKILL_STORE_INSTALL_DIR is honoured.
+# SKILL_STORE_INSTALL_DIR is honored.
 INSTALL_DIR="$FAKE_HOME/custom-skills"
 FIXTURE_REPO="$TMP_DIR/fixture-repo"
 SERVER_LOG="$TMP_DIR/server.log"

@@ -44,11 +44,11 @@ SEVEN functions, three layers, and they can disagree:
     install.go  copyTree             carries the sibling files and their subdirectories
     server.go   installSkill         routes force in and maps two error kinds to 404/409
     server.go   uninstallSkill       turns "not installed" into a 200 rather than a failure
-    server.go   listInstallations    the empty-array normalisation dash depends on
+    server.go   listInstallations    the empty-array normalization dash depends on
 
 📄 The 218th pass's rule — *assert the effect, not the reply* — is load-bearing
 here in its sharpest form yet. `Install`'s reply is an `Installation` struct the
-route serialises without re-reading the row, and its `InstalledAt` comes from a
+route serializes without re-reading the row, and its `InstalledAt` comes from a
 SECOND `now()` call rather than from the value the INSERT wrote. The two agree
 only because `now()` has one-second resolution.
 `TheReplyDescribesTheRowThatWasActuallyWritten` pins them equal so the drift
@@ -177,7 +177,7 @@ CASES = [
           "\t\tON CONFLICT(skill_id) DO NOTHING\n")],
     ),
     Case(
-        # The reply is the only thing the route serialises, and it is not read
+        # The reply is the only thing the route serializes, and it is not read
         # back from the row. Drift one field and nothing but an equality
         # assertion between reply and row can see it.
         "the reply reports a timestamp the row does not hold",
@@ -272,7 +272,7 @@ CASES = [
           "\twriteJSON(w, 200, map[string]string{\"status\": \"not-installed\"})\n\t_ = inst")],
     ),
     Case(
-        "the empty listing serialises as null, which is not an array and cannot be mapped over",
+        "the empty listing serializes as null, which is not an array and cannot be mapped over",
         [("\tif insts == nil {\n\t\tinsts = []Installation{}\n\t}\n", "")],
     ),
 

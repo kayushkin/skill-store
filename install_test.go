@@ -537,7 +537,7 @@ func TestTheForceParameterIsTheLiteralStringTrue(t *testing.T) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 409 {
-		t.Fatalf("force=1 was honoured as forcing (status %d); only the literal \"true\" forces, "+
+		t.Fatalf("force=1 was honored as forcing (status %d); only the literal \"true\" forces, "+
 			"and a wider reading of it would let force=false displace an installed skill", resp.StatusCode)
 	}
 
@@ -547,7 +547,7 @@ func TestTheForceParameterIsTheLiteralStringTrue(t *testing.T) {
 	}
 	defer resp2.Body.Close()
 	if resp2.StatusCode != 200 {
-		t.Fatalf("force=true was not honoured (status %d)", resp2.StatusCode)
+		t.Fatalf("force=true was not honored (status %d)", resp2.StatusCode)
 	}
 	if _, _, found := installationRow(t, s, first); found {
 		t.Fatal("force=true answered 200 without displacing the incumbent's row")
@@ -615,7 +615,7 @@ func TestTheUninstallRouteRemovesTheDirectoryAndTheRow(t *testing.T) {
 	}
 }
 
-// An empty listing must serialise as [] and not null. A client that iterates the
+// An empty listing must serialize as [] and not null. A client that iterates the
 // response sees "no skills installed" either way in Go, but null is not an array
 // in JSON and the dash page that reads this cannot map over it.
 func TestTheInstallationsRouteAnswersAnEmptyArrayNotNull(t *testing.T) {
@@ -635,7 +635,7 @@ func TestTheInstallationsRouteAnswersAnEmptyArrayNotNull(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 	if strings.TrimSpace(string(raw)) != "[]" {
-		t.Fatalf("empty listing serialised as %s, want []", raw)
+		t.Fatalf("empty listing serialized as %s, want []", raw)
 	}
 }
 
@@ -661,7 +661,7 @@ func TestTheInstallationsRouteReportsWhatIsInstalled(t *testing.T) {
 	}
 }
 
-// ---- a characterisation: behaviour that is filed, not fixed ----
+// ---- a characterisation: behavior that is filed, not fixed ----
 //
 // Its sibling, the path-traversal characterisation, was deleted when the
 // containment guard landed; install_containment_test.go replaces it.

@@ -506,7 +506,7 @@ func TestAnInstallationOutsideHomeIsNotEvenRead(t *testing.T) {
 // row written (the store believes it captured the file) and no manifest entry
 // (no machine is ever sent it). Nothing logs the discrepancy.
 //
-// This test pins today's behaviour so the silent drop cannot widen unnoticed. It
+// This test pins today's behavior so the silent drop cannot widen unnoticed. It
 // is filed rather than fixed because the repair has several plausible shapes —
 // compare cleaned paths, split on the separator and match a ".." COMPONENT, or
 // drop the check as redundant given the containment check above it — and picking
@@ -546,7 +546,7 @@ func TestAFileWhoseNameContainsDotDotIsCapturedButNeverSeeded(t *testing.T) {
 	}
 	if n == 0 {
 		t.Fatal("notes..md is no longer version-logged either — the drop is now consistent, " +
-			"which is a change in behaviour this test was written to detect")
+			"which is a change in behavior this test was written to detect")
 	}
 }
 
