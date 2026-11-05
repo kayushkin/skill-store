@@ -19,15 +19,15 @@ import (
 )
 
 // The registry gives the two commands what their four os.Getenv reads gave them
-// before 2026-09-20: ":8301", the default data directory and the default install
+// before 2026-09-20 (":8301" then, loopback since 2026-11-05), the default data directory and the default install
 // directory with nothing set, and the operator's values when they are set.
 func TestTheRegistryReadsTheSameValuesTheCommandsAlwaysDid(t *testing.T) {
 	unset, err := NewSettingsRegistry(servicesettings.MapEnvironment(map[string]string{"HOME": "/home/someone"}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := unset.String(SettingListenAddress); got != ":8301" {
-		t.Errorf("listen address with nothing set = %q, want :8301", got)
+	if got := unset.String(SettingListenAddress); got != "127.0.0.1:8301" {
+		t.Errorf("listen address with nothing set = %q, want 127.0.0.1:8301", got)
 	}
 	if got := unset.String(SettingDataDirectory); got != DefaultDataDir() {
 		t.Errorf("data directory with nothing set = %q, want what Open(\"\") uses, %q", got, DefaultDataDir())
@@ -66,7 +66,7 @@ func TestTheRegistryReadsTheSameValuesTheCommandsAlwaysDid(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if empty.String(SettingListenAddress) != ":8301" {
+	if empty.String(SettingListenAddress) != "127.0.0.1:8301" {
 		t.Errorf("empty listen address = %q", empty.String(SettingListenAddress))
 	}
 	if empty.String(SettingDataDirectory) != DefaultDataDir() {

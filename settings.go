@@ -41,8 +41,9 @@ const (
 	SettingInstallDirectory = "install_directory"
 )
 
-// DefaultListenAddress is where the service listens with nothing set.
-const DefaultListenAddress = ":8301"
+// DefaultListenAddress is where the service listens with nothing set: loopback,
+// because the service has no auth of its own.
+const DefaultListenAddress = "127.0.0.1:8301"
 
 // SettingDefinitions declares every environment variable this process reads,
 // once. The two commands read their configuration from it; GET /settings
